@@ -43,22 +43,32 @@ $.global.MM = (function () {
 
     function settingsFile() { return new File(state.dataDir.fsName + "/settings.json"); }
 
+    // Only these are user settings. Anything else (like the repo path) always comes from
+    // the loader, so a stale value saved by an older version can't break updates.
+    var USER_KEYS = ["repo", "branch", "token", "proxy"];
+
     function loadSettings() {
-        var s = {}, k, d = state.defaults;
+        var s = {}, k, i, d = state.defaults;
         for (k in d) s[k] = d[k];
         var f = settingsFile();
         if (f.exists) {
             try {
                 var saved = parseJSON(readText(f));
-                for (k in saved) s[k] = saved[k];
+                for (i = 0; i < USER_KEYS.length; i++) {
+                    k = USER_KEYS[i];
+                    if (saved[k] !== undefined) s[k] = saved[k];
+                }
             } catch (e) {}
         }
+        if (s.repo === "mmosadegh/TTT") s.repo = d.repo; // the toolkit moved out of TTT
         return s;
     }
 
     function saveSettings(s) {
         var parts = [];
-        for (var k in s) parts.push(quote(k) + ": " + quote(s[k]));
+        for (var i = 0; i < USER_KEYS.length; i++) {
+            parts.push(quote(USER_KEYS[i]) + ": " + quote(s[USER_KEYS[i]] || ""));
+        }
         writeText(settingsFile(), "{\n  " + parts.join(",\n  ") + "\n}\n");
     }
 
@@ -362,6 +372,21 @@ $.global.MM = (function () {
             }
         }
         return true;
+    };
+
+    // Move comp guides: fn(orientation, position) -> new position.
+    // orientation 0 = horizontal guide (y), 1 = vertical guide (x). Needs AE 16.1+.
+    api.util.mapGuides = function (comp, fn) {
+        var n = 0;
+        try {
+            var guides = comp.guides;
+            if (!guides) return 0;
+            for (var i = 0; i < guides.length; i++) {
+                var p = fn(guides[i].orientationType, guides[i].position);
+                if (p !== guides[i].position) { comp.setGuide(p, i); n++; }
+            }
+        } catch (e) {}
+        return n;
     };
 
     // instanceof AVLayer is false for text/shape layers in ExtendScript, so test by exclusion.

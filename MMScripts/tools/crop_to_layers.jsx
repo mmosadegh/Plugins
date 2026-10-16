@@ -127,6 +127,8 @@
         comp.width = w;
         comp.height = h;
 
+        api.util.mapGuides(comp, function (orient, p) { return orient === 1 ? p - left : p - top; });
+
         var skippedNested = o.fixParents ? shiftNestedInstances(comp, left, top, api) : 0;
 
         var notes = [];

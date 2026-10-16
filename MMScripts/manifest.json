@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
-  "changelog": "Update now uses your system proxy/VPN and shows the exact error. New Proxy field in Settings.\nCrop now works with text and shape layers.\nNew: Flip Selected Layers (each layer in place).\nNew: Flip Comp option 'Keep objects unmirrored' (mirror the layout only).",
+  "version": "1.3.0",
+  "changelog": "Fixed Update (404 after saving settings).\nFlip Comp 'layout only' rewritten: parented layers and big layers stay correct.\nFlip Comp now flips guides; Crop shifts guides.\nUpdate now uses your system proxy/VPN and shows the exact error. New Proxy field in Settings.\nCrop now works with text and shape layers.\nNew: Flip Selected Layers (each layer in place).\nNew: Flip Comp option 'Keep objects unmirrored' (mirror the layout only).",
   "files": [
     "core.jsx",
     "tools/crop_to_layers.jsx",
