@@ -57,11 +57,32 @@
         try { system.callSystem(cmd); } catch (e) {}
     }
 
+    function manifestVersion(dir) {
+        var f = new File(dir.fsName + "/manifest.json");
+        if (!f.exists || !f.open("r")) return "";
+        var text = f.read();
+        f.close();
+        var m = text.match(/"version"\s*:\s*"([^"]+)"/);
+        return m ? m[1] : "";
+    }
+
+    function newer(a, b) { // is version a > b ?
+        var x = a.split("."), y = b.split(".");
+        for (var i = 0; i < Math.max(x.length, y.length); i++) {
+            var d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0);
+            if (d) return d > 0;
+        }
+        return false;
+    }
+
     function load() {
         if (!DATA_DIR.exists) DATA_DIR.create();
         var core = new File(DATA_DIR.fsName + "/core.jsx");
 
-        if (!core.exists && BUNDLE_DIR.exists) copyFolder(BUNDLE_DIR, DATA_DIR);
+        // A bundled copy newer than the installed one (manual install from ZIP) wins.
+        if (BUNDLE_DIR.exists && (!core.exists || newer(manifestVersion(BUNDLE_DIR), manifestVersion(DATA_DIR)))) {
+            copyFolder(BUNDLE_DIR, DATA_DIR);
+        }
         if (!core.exists) downloadCore();
         if (!core.exists) {
             showMessage([

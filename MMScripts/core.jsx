@@ -93,21 +93,67 @@ $.global.MM = (function () {
         }
     }
 
-    function download(url, file, token) {
-        if (file.exists) file.remove();
-        var isWin = $.os.indexOf("Windows") !== -1;
-        var cmd;
+    var isWin = $.os.indexOf("Windows") !== -1;
+    var lastError = "";
+
+    function sh(cmd) {
+        try { return String(system.callSystem(cmd) || ""); } catch (e) { return String(e); }
+    }
+
+    // curl ignores the OS proxy (VPN apps often set one), so read it ourselves.
+    function systemProxy() {
+        var out, m;
         if (isWin) {
-            cmd = 'cmd.exe /c curl.exe -fsSL ' + (token ? '-H "Authorization: token ' + token + '" ' : "") +
-                '-o "' + file.fsName + '" "' + url + '"';
-        } else {
-            cmd = "curl -fsSL " + (token ? "-H 'Authorization: token " + token + "' " : "") +
-                "-o '" + file.fsName + "' '" + url + "'";
+            out = sh('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"');
+            if (!/ProxyEnable\s+REG_DWORD\s+0x1/.test(out)) return "";
+            m = out.match(/ProxyServer\s+REG_SZ\s+(\S+)/);
+            if (!m) return "";
+            var v = m[1];
+            if (v.indexOf("=") === -1) return "http://" + v;
+            m = v.match(/https=([^;]+)/) || v.match(/http=([^;]+)/);
+            if (m) return "http://" + m[1];
+            m = v.match(/socks=([^;]+)/);
+            return m ? "socks5h://" + m[1] : "";
         }
-        system.callSystem(cmd);
-        if (!file.exists && isWin) {
+        out = sh("/usr/sbin/scutil --proxy");
+        function get(key) { var r = out.match(new RegExp(key + " : (\\S+)")); return r ? r[1] : ""; }
+        if (get("HTTPSEnable") === "1" && get("HTTPSProxy")) return "http://" + get("HTTPSProxy") + ":" + get("HTTPSPort");
+        if (get("HTTPEnable") === "1" && get("HTTPProxy")) return "http://" + get("HTTPProxy") + ":" + get("HTTPPort");
+        if (get("SOCKSEnable") === "1" && get("SOCKSProxy")) return "socks5h://" + get("SOCKSProxy") + ":" + get("SOCKSPort");
+        return "";
+    }
+
+    // settings.proxy: "" = use the system proxy if any, "none" = direct, otherwise a proxy URL.
+    function proxyCandidates(s) {
+        var p = s.proxy || "";
+        if (p === "none") return [""];
+        if (p) return [p];
+        var sys = systemProxy();
+        return sys ? [sys, ""] : [""];
+    }
+
+    function curlOnce(url, file, token, proxy) {
+        var q = isWin ? '"' : "'";
+        var cmd = (isWin ? "cmd.exe /c curl.exe" : "/usr/bin/curl") +
+            " -sS -f -L --connect-timeout 15 --max-time 90" +
+            (proxy ? " -x " + q + proxy + q : "") +
+            (token ? " -H " + q + "Authorization: token " + token + q : "") +
+            " -o " + q + file.fsName + q + " " + q + url + q + " 2>&1";
+        var out = sh(cmd);
+        var ok = file.exists && file.length > 0;
+        if (!ok) lastError = (proxy ? "[proxy " + proxy + "] " : "[direct] ") + (out.replace(/^\s+|\s+$/g, "") || "no output");
+        return ok;
+    }
+
+    function download(url, file, token, proxies) {
+        lastError = "";
+        for (var i = 0; i < proxies.length; i++) {
+            if (file.exists) file.remove();
+            if (curlOnce(url, file, token, proxies[i])) return true;
+        }
+        if (isWin && !file.exists) {
             // Old Windows without curl.exe.
-            system.callSystem('powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri \'' + url +
+            sh('powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri \'' + url +
                 "' -OutFile '" + file.fsName + "'" + (token ? " -Headers @{Authorization='token " + token + "'}" : "") + '"');
         }
         return file.exists && file.length > 0;
@@ -136,12 +182,14 @@ $.global.MM = (function () {
         ensureFolder(stage.fsName + "/tools");
         setStatus("Checking " + s.repo + "@" + s.branch + " ...");
 
+        var proxies = proxyCandidates(s);
         var mFile = new File(stage.fsName + "/manifest.json");
-        if (!download(rawUrl(s, "manifest.json"), mFile, s.token)) {
+        if (!download(rawUrl(s, "manifest.json"), mFile, s.token, proxies)) {
             setStatus("Update failed: could not reach GitHub.");
             alert("Could not download manifest.json from\n" + s.repo + " (branch: " + s.branch + ").\n\n" +
                 "Check your internet connection and the repo/branch in Settings.\n" +
-                "Private repos need a token in Settings.", "MMScripts");
+                "If you use a VPN/proxy, put its address in Settings > Proxy\n(e.g. http://127.0.0.1:10809).\n\n" +
+                "Error: " + lastError, "MMScripts");
             return;
         }
         var manifest;
@@ -154,7 +202,7 @@ $.global.MM = (function () {
         for (i = 0; i < manifest.files.length; i++) {
             rel = manifest.files[i];
             setStatus("Downloading " + rel + " ...");
-            if (!download(rawUrl(s, rel), new File(stage.fsName + "/" + rel), s.token)) {
+            if (!download(rawUrl(s, rel), new File(stage.fsName + "/" + rel), s.token, proxies)) {
                 setStatus("Update failed on " + rel + ". Nothing was changed.");
                 return;
             }
@@ -196,8 +244,10 @@ $.global.MM = (function () {
         }
         var eRepo = row("Repo", s.repo);
         var eBranch = row("Branch", s.branch);
-        var eToken = row("Token", s.token);
+        var eToken = row("Token", s.token || "");
+        var eProxy = row("Proxy", s.proxy || "");
         w.add("statictext", undefined, "Branch HEAD = repo's default branch. Token only for private repos.");
+        w.add("statictext", undefined, "Proxy: empty = system proxy, none = direct, or e.g. http://127.0.0.1:10809");
         var btns = w.add("group");
         btns.alignment = "right";
         var reset = btns.add("button", undefined, "Defaults");
@@ -207,11 +257,13 @@ $.global.MM = (function () {
             eRepo.text = state.defaults.repo;
             eBranch.text = state.defaults.branch;
             eToken.text = "";
+            eProxy.text = "";
         };
         ok.onClick = function () {
             s.repo = eRepo.text.replace(/^\s+|\s+$/g, "");
             s.branch = eBranch.text.replace(/^\s+|\s+$/g, "") || "HEAD";
             s.token = eToken.text.replace(/^\s+|\s+$/g, "");
+            s.proxy = eProxy.text.replace(/^\s+|\s+$/g, "");
             saveSettings(s);
             w.close(1);
         };
