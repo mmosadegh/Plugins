@@ -1,0 +1,10 @@
+{
+  "version": "1.1.0",
+  "changelog": "Crop now works with text and shape layers.\nNew: Flip Selected Layers (each layer in place).\nNew: Flip Comp option 'Keep objects unmirrored' (mirror the layout only).",
+  "files": [
+    "core.jsx",
+    "tools/crop_to_layers.jsx",
+    "tools/flip_comp.jsx",
+    "tools/flip_layers.jsx"
+  ]
+}
