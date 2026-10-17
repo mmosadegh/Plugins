@@ -420,6 +420,62 @@ $.global.MM = (function () {
         return true;
     };
 
+    // Corner probes: a hidden null with 4 Point Controls whose expressions return
+    // a layer's sourceRect corners in comp space (handles parenting, 3D, scale, rotation).
+    // Returns { l, t, r, b } in comp pixels. Layers need bounds (see hasBounds).
+    api.util.measureBounds = function (comp, layers, wholeDuration) {
+        var probe = comp.layers.addNull();
+        probe.name = "MM_TEMP_PROBE";
+        probe.moveToEnd();
+        var fx = probe.property("ADBE Effect Parade");
+        var k;
+        for (k = 0; k < 4; k++) fx.addProperty("ADBE Point Control");
+
+        var corners = [[0, 0], [1, 0], [0, 1], [1, 1]];
+        var box = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity };
+        var fd = comp.frameDuration;
+
+        try {
+            for (var i = 0; i < layers.length; i++) {
+                var L = layers[i];
+                var ext = (L instanceof ShapeLayer) ? "true" : "false";
+                var pts = [];
+                for (k = 0; k < 4; k++) {
+                    var p = fx.property(k + 1).property(1); // re-fetch: adding effects invalidates refs
+                    p.expression =
+                        "var L = thisComp.layer(" + L.index + ");\n" +
+                        "var r = L.sourceRectAtTime(time, " + ext + ");\n" +
+                        "var q = L.toComp([r.left + " + corners[k][0] + " * r.width, r.top + " + corners[k][1] + " * r.height]);\n" +
+                        "[q[0], q[1]];";
+                    if (p.expressionError) throw new Error("Could not measure '" + L.name + "': " + p.expressionError);
+                    pts.push(p);
+                }
+
+                var times = [];
+                if (wholeDuration) {
+                    var t0 = Math.max(L.inPoint, 0), t1 = Math.min(L.outPoint, comp.duration);
+                    for (var t = t0; t < t1; t += fd) times.push(t);
+                    if (!times.length) times.push(comp.time);
+                } else {
+                    times.push(comp.time);
+                }
+
+                for (var ti = 0; ti < times.length; ti++) {
+                    for (k = 0; k < 4; k++) {
+                        var v = pts[k].valueAtTime(times[ti], false);
+                        if (v[0] < box.l) box.l = v[0];
+                        if (v[0] > box.r) box.r = v[0];
+                        if (v[1] < box.t) box.t = v[1];
+                        if (v[1] > box.b) box.b = v[1];
+                    }
+                }
+            }
+        } finally {
+            probe.remove();
+        }
+        return box;
+    };
+
     // ---------- UI ----------
 
     T.boot = function (panel, ctx) {
