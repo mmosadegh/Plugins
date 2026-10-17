@@ -1,11 +1,12 @@
 {
-  "version": "1.4.0",
-  "changelog": "New: Group Layers. Puts a null in the center of the selected layers, parents them to it and gives them one label color. Also Ungroup and Select Members.\nGuides now move with Crop and Flip.",
+  "version": "1.5.0",
+  "changelog": "Panel: tools are now collapsible (one open at a time) and the panel scrolls with a scrollbar.\nNew: Sync Precomp Markers. Copies each precomp's comp markers onto its layer. Run again to update.",
   "files": [
     "core.jsx",
     "tools/crop_to_layers.jsx",
     "tools/flip_comp.jsx",
     "tools/flip_layers.jsx",
-    "tools/group_layers.jsx"
+    "tools/group_layers.jsx",
+    "tools/sync_markers.jsx"
   ]
 }

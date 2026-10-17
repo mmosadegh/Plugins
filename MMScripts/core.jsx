@@ -283,10 +283,7 @@ $.global.MM = (function () {
     // ---------- shared helpers for tools ----------
 
     function setStatus(msg) {
-        if (state.statusText) {
-            state.statusText.text = msg;
-            try { state.panel.layout.layout(true); } catch (e) {}
-        }
+        if (state.statusText) state.statusText.text = msg;
     }
 
     var api = {
@@ -478,6 +475,50 @@ $.global.MM = (function () {
 
     // ---------- UI ----------
 
+    function uiFile() { return new File(state.dataDir.fsName + "/ui.json"); }
+
+    function readUiState() {
+        var f = uiFile();
+        if (!f.exists) return {};
+        try { return parseJSON(readText(f)); } catch (e) { return {}; }
+    }
+
+    function writeUiState(o) {
+        writeText(uiFile(), "{ \"open\": " + quote(o.open || "") + " }\n");
+    }
+
+    // A collapsible tool: a header button and a body panel that is hidden by giving it
+    // zero height (hidden ScriptUI controls still take space otherwise).
+    function addSection(parent, tool, open) {
+        var sec = { id: tool.id, name: tool.name, open: false };
+        sec.header = parent.add("button", undefined, "");
+        sec.header.alignment = ["fill", "top"];
+        sec.body = parent.add("panel");
+        sec.body.orientation = "column";
+        sec.body.alignChildren = ["fill", "top"];
+        sec.body.margins = [8, 8, 8, 8];
+        sec.body.spacing = 4;
+        try {
+            tool.build(sec.body, api);
+        } catch (e) {
+            sec.body.add("statictext", undefined, "Error: " + e);
+        }
+        showSection(sec, open);
+        return sec;
+    }
+
+    function showSection(sec, open) {
+        sec.open = open;
+        sec.header.text = (open ? "\u25BE  " : "\u25B8  ") + sec.name;
+        sec.body.visible = open;
+        sec.body.maximumSize = [10000, open ? 10000 : 0];
+    }
+
+    function setOpen(sections, idx) {
+        for (var i = 0; i < sections.length; i++) showSection(sections[i], i === idx);
+    }
+
+
     T.boot = function (panel, ctx) {
         state.panel = panel;
         state.dataDir = ctx.dataDir;
@@ -501,6 +542,7 @@ $.global.MM = (function () {
         panel.margins = 8;
 
         var head = panel.add("group");
+        head.alignment = ["fill", "top"];
         head.alignChildren = ["left", "center"];
         var title = head.add("statictext", undefined, "MMScripts " + (manifest ? "v" + manifest.version : ""));
         title.alignment = ["fill", "center"];
@@ -512,34 +554,83 @@ $.global.MM = (function () {
         bSet.preferredSize = [26, 22];
         bReload.helpTip = "Reload tools from disk (no AE restart).";
         bUpdate.helpTip = "Download the latest tools from GitHub and reload.";
-        bSet.helpTip = "Settings: repo, branch, token.";
+        bSet.helpTip = "Settings: repo, branch, token, proxy.";
         bReload.onClick = function () { state.reload(); $.global.MM.api.status("Reloaded."); };
         bUpdate.onClick = update;
         bSet.onClick = openSettings;
 
+        // ScriptUI panels never scroll by themselves (unlike HTML/CEP panels), so the tool list
+        // sits in a clipping group that a scrollbar slides up and down.
+        var view = panel.add("group");
+        view.orientation = "row";
+        view.alignment = ["fill", "fill"];
+        view.alignChildren = ["fill", "fill"];
+        view.spacing = 2;
+        view.margins = 0;
+        var clip = view.add("group");
+        clip.orientation = "column";
+        clip.alignment = ["fill", "fill"];
+        clip.alignChildren = ["fill", "top"];
+        clip.margins = 0;
+        var content = clip.add("group");
+        content.orientation = "column";
+        content.alignment = ["fill", "top"];
+        content.alignChildren = ["fill", "top"];
+        content.spacing = 4;
+        content.margins = 0;
+        var sb = view.add("scrollbar", undefined, 0, 0, 100);
+        sb.alignment = ["right", "fill"];
+        sb.preferredSize.width = 14;
+        sb.stepdelta = 30;
+
         if (!T.tools.length) {
-            panel.add("statictext", undefined, "No tools installed yet. Press Update.");
+            content.add("statictext", undefined, "No tools installed yet. Press Update.");
         }
 
+        // Accordion: one tool open at a time keeps the panel short. The open tool is remembered.
+        var openId = readUiState().open;
+        var sections = [];
         for (var t = 0; t < T.tools.length; t++) {
-            var tool = T.tools[t];
-            var box = panel.add("panel", undefined, tool.name);
-            box.orientation = "column";
-            box.alignChildren = ["fill", "top"];
-            box.margins = [8, 14, 8, 8];
-            box.spacing = 4;
-            try {
-                tool.build(box, api);
-            } catch (e) {
-                box.add("statictext", undefined, "Error: " + e);
-            }
+            sections.push(addSection(content, T.tools[t], T.tools[t].id === openId));
         }
+        if (openId === undefined && sections.length) setOpen(sections, 0);
 
         state.statusText = panel.add("statictext", undefined, loadErrors.length ? loadErrors.join(" | ") : "Ready.", { truncate: "end" });
         state.statusText.alignment = ["fill", "bottom"];
 
-        panel.layout.layout(true);
-        panel.layout.resize();
+        function refresh() {
+            panel.layout.layout(true);
+            panel.layout.resize();
+            var full = 0, kids = content.children;
+            for (var k = 0; k < kids.length; k++) {
+                if (kids[k].size) full = Math.max(full, kids[k].location.y + kids[k].size.height);
+            }
+            if (content.preferredSize && content.preferredSize.height > full) full = content.preferredSize.height;
+            var visible = clip.size.height;
+            var extra = Math.max(0, full - visible);
+            content.size = [clip.size.width, full];
+            sb.maxvalue = extra;
+            sb.enabled = extra > 0;
+            sb.jumpdelta = Math.max(30, visible - 30);
+            if (sb.value > extra) sb.value = extra;
+            content.location = [0, -sb.value];
+        }
+        sb.onChanging = sb.onChange = function () { content.location = [0, -this.value]; };
+        panel.onResizing = panel.onResize = function () { try { refresh(); } catch (e) { this.layout.resize(); } };
+
+        for (var si = 0; si < sections.length; si++) {
+            (function (idx) {
+                sections[idx].header.onClick = function () {
+                    setOpen(sections, sections[idx].open ? -1 : idx);
+                    writeUiState({ open: sections[idx].open ? sections[idx].id : "" });
+                    if (sections[idx].open) sb.value = 0;
+                    refresh();
+                };
+            })(si);
+        }
+
+        state.refresh = refresh;
+        try { refresh(); } catch (e) { panel.layout.layout(true); panel.layout.resize(); }
 
         if (!manifest && !T.tools.length) update();
     };
